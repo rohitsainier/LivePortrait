@@ -43,7 +43,6 @@ if not fast_check_ffmpeg():
 # specify configs for inference
 inference_cfg = partial_fields(InferenceConfig, args.__dict__)  # use attribute of args to initial InferenceConfig
 crop_cfg = partial_fields(CropConfig, args.__dict__)  # use attribute of args to initial CropConfig
-# global_tab_selection = None
 
 gradio_pipeline = GradioPipeline(
     inference_cfg=inference_cfg,
@@ -68,6 +67,57 @@ def gpu_wrapped_execute_video_retargeting(*args, **kwargs):
     return gradio_pipeline.execute_video_retargeting(*args, **kwargs)
 
 
+def gpu_wrapped_audio_lipsync(
+    source_video,
+    audio,
+    language,
+    whisper_model,
+    coarticulation,
+    smoothing_variance,
+    expression_multiplier,
+    enable_temporal_dynamics,  # NEW
+    lip_sync_strength  # NEW
+):
+    """Wrapper for audio lip-sync in Gradio with enhanced controls"""
+    from src.audio_lipsync_pipeline import AudioLipSyncPipeline
+
+    if source_video is None or audio is None:
+        raise gr.Error("Please upload both source video and audio file!", duration=3)
+
+    # Initialize pipeline
+    pipeline = AudioLipSyncPipeline(
+        inference_cfg=inference_cfg,
+        crop_cfg=crop_cfg,
+        whisper_model=whisper_model,
+        device=None  # Auto-detect
+    )
+
+    # Adjust parameters based on user settings
+    adjusted_expression = expression_multiplier * lip_sync_strength
+
+    try:
+        # Execute with enhanced parameters
+        output, output_concat = pipeline.execute_audio_lipsync(
+            source_video_path=source_video,
+            audio_path=audio,
+            language=language,
+            smoothing=True,
+            coarticulation_factor=coarticulation,
+            expression_multiplier=adjusted_expression,
+            enable_temporal_dynamics=enable_temporal_dynamics,  # Pass the new parameter
+            retargeting_source_scale=2.3,
+            driving_smooth_observation_variance=smoothing_variance,
+            flag_do_crop=True
+        )
+
+        gr.Info("✅ Audio lip-sync complete!", duration=3)
+        return output, output_concat
+
+    except Exception as e:
+        gr.Error(f"❌ Lip-sync failed: {str(e)}", duration=5)
+        raise e
+
+
 def reset_sliders(*args, **kwargs):
     return 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.5, True, True
 
@@ -86,12 +136,10 @@ data_examples_i2v = [
 ]
 data_examples_v2v = [
     [osp.join(example_portrait_dir, "s13.mp4"), osp.join(example_video_dir, "d0.mp4"), True, True, True, False, 3e-7],
-    # [osp.join(example_portrait_dir, "s14.mp4"), osp.join(example_video_dir, "d18.mp4"), True, True, True, False, False, 3e-7],
-    # [osp.join(example_portrait_dir, "s15.mp4"), osp.join(example_video_dir, "d19.mp4"), True, True, True, False, False, 3e-7],
     [osp.join(example_portrait_dir, "s18.mp4"), osp.join(example_video_dir, "d6.mp4"), True, True, True, False, 3e-7],
-    # [osp.join(example_portrait_dir, "s19.mp4"), osp.join(example_video_dir, "d6.mp4"), True, True, True, False, False, 3e-7],
     [osp.join(example_portrait_dir, "s20.mp4"), osp.join(example_video_dir, "d0.mp4"), True, True, True, False, 3e-7],
 ]
+
 #################### interface logic ####################
 
 # Define components first
@@ -157,10 +205,7 @@ with gr.Blocks(theme=gr.themes.Soft(font=[gr.themes.GoogleFont("Plus Jakarta San
                         gr.Examples(
                             examples=[
                                 [osp.join(example_portrait_dir, "s13.mp4")],
-                                # [osp.join(example_portrait_dir, "s14.mp4")],
-                                # [osp.join(example_portrait_dir, "s15.mp4")],
                                 [osp.join(example_portrait_dir, "s18.mp4")],
-                                # [osp.join(example_portrait_dir, "s19.mp4")],
                                 [osp.join(example_portrait_dir, "s20.mp4")],
                             ],
                             inputs=[source_video_input],
@@ -229,8 +274,6 @@ with gr.Blocks(theme=gr.themes.Soft(font=[gr.themes.GoogleFont("Plus Jakarta San
                 v_tab_video.select(lambda: "Video", None, v_tab_selection)
                 v_tab_image.select(lambda: "Image", None, v_tab_selection)
                 v_tab_pickle.select(lambda: "Pickle", None, v_tab_selection)
-            # with gr.Accordion(open=False, label="Animation Instructions"):
-                # gr.Markdown(load_description("assets/gradio/gradio_description_animation.md"))
             with gr.Accordion(open=True, label="Cropping Options for Driving Video"):
                 with gr.Row():
                     flag_crop_driving_video_input = gr.Checkbox(value=False, label="do crop (driving)")
@@ -267,7 +310,6 @@ with gr.Blocks(theme=gr.themes.Soft(font=[gr.themes.GoogleFont("Plus Jakarta San
         process_button_reset = gr.ClearButton([source_image_input, source_video_input, driving_video_pickle_input, driving_video_input, driving_image_input, output_video_i2v, output_video_concat_i2v, output_image_i2i, output_image_concat_i2i], value="🧹 Clear")
 
     with gr.Row():
-        # Examples
         gr.Markdown("## You could also choose the examples below by one click ⬇️")
     with gr.Row():
         with gr.Tabs():
@@ -362,7 +404,6 @@ with gr.Blocks(theme=gr.themes.Soft(font=[gr.themes.GoogleFont("Plus Jakarta San
                         [osp.join(example_portrait_dir, "s7.jpg")],
                         [osp.join(example_portrait_dir, "s12.jpg")],
                         [osp.join(example_portrait_dir, "s22.jpg")],
-                        # [osp.join(example_portrait_dir, "s23.jpg")],
                         [osp.join(example_portrait_dir, "s42.jpg")],
                     ],
                     inputs=[retargeting_input_image],
@@ -401,8 +442,6 @@ with gr.Blocks(theme=gr.themes.Soft(font=[gr.themes.GoogleFont("Plus Jakarta San
                 gr.Examples(
                     examples=[
                         [osp.join(example_portrait_dir, "s13.mp4")],
-                        # [osp.join(example_portrait_dir, "s18.mp4")],
-                        # [osp.join(example_portrait_dir, "s20.mp4")],
                         [osp.join(example_portrait_dir, "s29.mp4")],
                         [osp.join(example_portrait_dir, "s32.mp4")],
                         [osp.join(example_video_dir, "d3.mp4")],
@@ -425,6 +464,121 @@ with gr.Blocks(theme=gr.themes.Soft(font=[gr.themes.GoogleFont("Plus Jakarta San
                 output_video_paste_back
             ],
             value="🧹 Clear"
+        )
+
+    # Audio Lip-Sync Section
+    gr.Markdown("---")
+    gr.Markdown("## 🎵 Audio-Driven Lip-Sync", visible=True)
+    gr.Markdown("""
+        Automatically sync lips to any audio file using **Whisper + Multi-dimensional Phoneme mapping**.
+
+        **Quick Tips:**
+        - 📹 Use a clear frontal face video
+        - 🎤 Audio works best with clear speech
+        - 🎚️ Start with default settings, then adjust
+        - ⚡ Use 'base' Whisper model for speed, 'small' for accuracy
+    """, visible=True)
+
+    with gr.Row(visible=True):
+        with gr.Column():
+            with gr.Accordion(open=True, label="📹 Source Video"):
+                lipsync_source_video = gr.Video(label="Video with face")
+                gr.Examples(
+                    examples=[
+                        [osp.join(example_portrait_dir, "s13.mp4")],
+                        [osp.join(example_portrait_dir, "s29.mp4")],
+                        [osp.join(example_portrait_dir, "s18.mp4")],
+                        [osp.join(example_portrait_dir, "s7.jpg")],  # Images work too!
+                    ],
+                    inputs=[lipsync_source_video],
+                    cache_examples=False,
+                )
+
+            with gr.Accordion(open=True, label="🎤 Audio File"):
+                lipsync_audio = gr.Audio(type="filepath", label="Audio to lip-sync")
+                gr.Markdown("*Supports: MP3, WAV, M4A, FLAC*")
+
+            with gr.Accordion(open=False, label="⚙️ Basic Settings"):
+                lipsync_language = gr.Dropdown(
+                    choices=['en', 'zh', 'es', 'fr', 'de', 'ja', 'ko', 'pt', 'ru', 'ar'],
+                    value='en',
+                    label="🌍 Audio Language"
+                )
+                lipsync_whisper_model = gr.Dropdown(
+                    choices=['tiny', 'base', 'small', 'medium'],
+                    value='base',
+                    label="🤖 Whisper Model Size"
+                )
+                gr.Markdown("*tiny=fastest, base=balanced, small=accurate, medium=best quality (slow)*")
+
+            with gr.Accordion(open=True, label="🎨 Expression Controls"):
+                lipsync_expression_multiplier = gr.Slider(
+                    minimum=0.5, maximum=2.0, value=1.3, step=0.1,
+                    label="💪 Expression Strength",
+                    info="0.7=subtle | 1.0=natural | 1.3=recommended | 1.5+=exaggerated"
+                )
+
+                lipsync_lip_sync_strength = gr.Slider(
+                    minimum=0.5, maximum=1.5, value=1.0, step=0.05,
+                    label="🎯 Global Lip-Sync Strength",
+                    info="Master control for all lip movements"
+                )
+
+            with gr.Accordion(open=False, label="🔬 Advanced Tuning"):
+                lipsync_coarticulation = gr.Slider(
+                    minimum=0.0, maximum=0.5, value=0.30, step=0.05,
+                    label="🔄 Coarticulation",
+                    info="How much neighboring phonemes blend (0=sharp, 0.3=natural, 0.5=very smooth)"
+                )
+
+                lipsync_enable_temporal = gr.Checkbox(
+                    value=True,
+                    label="⚡ Enable Temporal Dynamics",
+                    info="Add anticipation & overshoot for natural speech rhythm"
+                )
+
+                lipsync_smoothing_variance = gr.Number(
+                    value=3e-6,
+                    label="🎭 Motion Smoothing",
+                    minimum=1e-11,
+                    maximum=1e-2,
+                    info="Higher = smoother, but may reduce motion accuracy"
+                )
+
+        with gr.Column():
+            with gr.Accordion(open=True, label="✨ Lip-Synced Result"):
+                lipsync_output = gr.Video(label="Output with audio", autoplay=False)
+                gr.Markdown("*This is the final result with audio attached*")
+
+            with gr.Accordion(open=True, label="📊 Comparison View"):
+                lipsync_output_concat = gr.Video(label="Source vs Result (side-by-side)", autoplay=False)
+                gr.Markdown("*Left: Original | Right: Lip-synced*")
+
+            with gr.Accordion(open=False, label="📖 Usage Tips"):
+                gr.Markdown("""
+                    **For Best Results:**
+
+                    1. **Clear Frontal Faces** - Works best with faces looking at camera
+                    2. **Good Audio Quality** - Clear speech, minimal background noise
+                    3. **Match Language** - Set the correct audio language
+                    4. **Adjust Expression** - Start at 1.3, increase if movements too subtle
+                    5. **Enable Temporal Dynamics** - Adds natural speech anticipation
+
+                    **Troubleshooting:**
+                    - ❌ Movements too weak? → Increase "Expression Strength" to 1.5-1.8
+                    - ❌ Too jittery? → Increase "Coarticulation" to 0.35-0.4
+                    - ❌ Unnatural timing? → Enable "Temporal Dynamics"
+                    - ❌ Audio mismatch? → Check language setting matches your audio
+                    - ❌ Slow processing? → Use 'tiny' or 'base' Whisper model
+                """)
+
+    # NOW define the buttons AFTER the output components
+    with gr.Row(visible=True):
+        lipsync_button = gr.Button("🎵 Generate Lip-Sync", variant="primary", scale=2)
+        lipsync_clear_button = gr.ClearButton(
+            [lipsync_source_video, lipsync_audio, lipsync_output, lipsync_output_concat],
+            value="🧹 Clear",
+            scale=1
         )
 
     # binding functions for buttons
@@ -459,7 +613,6 @@ with gr.Blocks(theme=gr.themes.Soft(font=[gr.themes.GoogleFont("Plus Jakarta San
         show_progress=True
     )
 
-
     retargeting_input_image.change(
         fn=gradio_pipeline.init_retargeting_image,
         inputs=[retargeting_source_scale, eye_retargeting_slider, lip_retargeting_slider, retargeting_input_image],
@@ -468,7 +621,6 @@ with gr.Blocks(theme=gr.themes.Soft(font=[gr.themes.GoogleFont("Plus Jakarta San
 
     sliders = [eye_retargeting_slider, lip_retargeting_slider, head_pitch_slider, head_yaw_slider, head_roll_slider, mov_x, mov_y, mov_z, lip_variation_zero, lip_variation_one, lip_variation_two, lip_variation_three, smile, wink, eyebrow, eyeball_direction_x, eyeball_direction_y]
     for slider in sliders:
-        # NOTE: gradio >= 4.0.0 may cause slow response
         slider.change(
             fn=gpu_wrapped_execute_image_retargeting,
             inputs=[
@@ -486,8 +638,29 @@ with gr.Blocks(theme=gr.themes.Soft(font=[gr.themes.GoogleFont("Plus Jakarta San
         show_progress=True
     )
 
+    # Audio Lip-Sync button binding (UPDATED WITH MISSING PARAMETERS)
+    lipsync_button.click(
+        fn=gpu_wrapped_audio_lipsync,
+        inputs=[
+            lipsync_source_video,
+            lipsync_audio,
+            lipsync_language,
+            lipsync_whisper_model,
+            lipsync_coarticulation,
+            lipsync_smoothing_variance,
+            lipsync_expression_multiplier,
+            lipsync_enable_temporal,      # ✅ NOW INCLUDED
+            lipsync_lip_sync_strength     # ✅ NOW INCLUDED
+        ],
+        outputs=[lipsync_output, lipsync_output_concat],
+        show_progress=True
+    )
+
 demo.launch(
     server_port=args.server_port,
     share=args.share,
     server_name=args.server_name
 )
+
+#Note: On MacOS
+# PYTORCH_ENABLE_MPS_FALLBACK=1 python app.py

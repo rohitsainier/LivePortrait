@@ -2,7 +2,8 @@
 
 """
 Enhanced Multi-Dimensional Phoneme to Viseme mapping for LivePortrait
-OPTIMIZED VERSION with improved parameters and temporal dynamics
+HYBRID VERSION: Real tracked data + Manual refinements
+Updated with video analysis from test.mp4
 """
 
 import numpy as np
@@ -50,7 +51,7 @@ class VisemeParams:
 
 
 class EnhancedLivePortraitVisemes:
-    """Enhanced viseme set with OPTIMIZED parameters for better lip-sync"""
+    """Enhanced viseme set with REAL TRACKED + OPTIMIZED parameters"""
 
     PHONEME_TO_VISEME_PARAMS = {
         # Silence/Rest
@@ -61,29 +62,62 @@ class EnhancedLivePortraitVisemes:
             jaw_open=0.1, lip_width=0.5, lip_protrusion=0.1
         ),
 
-        # Bilabial stops - INCREASED jaw_open for visibility
+        # Bilabial stops - TRACKED DATA
         'M': VisemeParams(
-            jaw_open=0.08, lip_width=0.5, lip_protrusion=0.12,
-            lip_tightness=0.7, anticipation_factor=0.15
+            jaw_open=0.645,  # TRACKED (was 0.08)
+            lip_width=1.000,  # TRACKED (was 0.5)
+            lip_protrusion=0.12,  # KEPT (tracking failed)
+            upper_lip_raise=0.05,  # ADJUSTED
+            lower_lip_lower=0.05,  # ADJUSTED
+            corner_pull_horizontal=-0.171,  # TRACKED
+            corner_pull_back=0.116,  # TRACKED
+            lip_tightness=0.677,  # TRACKED
+            anticipation_factor=0.15
         ),
         'B': VisemeParams(
-            jaw_open=0.12, lip_width=0.5, lip_protrusion=0.08,
-            lip_tightness=0.6, overshoot_factor=0.1
+            jaw_open=0.466,  # TRACKED (was 0.12)
+            lip_width=1.000,  # TRACKED
+            lip_protrusion=0.08,  # KEPT
+            upper_lip_raise=0.03,  # ADJUSTED
+            lower_lip_lower=0.03,  # ADJUSTED
+            corner_pull_horizontal=0.166,  # TRACKED
+            corner_pull_back=0.230,  # TRACKED
+            lip_tightness=0.767,  # TRACKED
+            overshoot_factor=0.1
         ),
         'P': VisemeParams(
-            jaw_open=0.12, lip_width=0.5, lip_protrusion=0.08,
-            lip_tightness=0.8, overshoot_factor=0.12
+            jaw_open=0.466,  # Same as B
+            lip_width=1.000,
+            lip_protrusion=0.08,
+            upper_lip_raise=0.03,
+            lower_lip_lower=0.03,
+            corner_pull_horizontal=0.166,
+            corner_pull_back=0.230,
+            lip_tightness=0.80,
+            overshoot_factor=0.12
         ),
 
-        # Labiodental - ENHANCED for visibility
+        # Labiodental - TRACKED DATA
         'F': VisemeParams(
-            jaw_open=0.18, lip_width=0.5, lip_protrusion=0.0,
-            upper_lip_raise=0.08, lower_lip_lower=0.28,
+            jaw_open=0.577,  # TRACKED (was 0.18)
+            lip_width=1.000,  # TRACKED
+            lip_protrusion=0.0,  # KEPT
+            upper_lip_raise=0.08,  # KEPT
+            lower_lip_lower=0.28,  # KEPT
+            corner_pull_horizontal=-0.039,  # TRACKED
+            corner_pull_back=0.113,  # TRACKED
+            lip_tightness=0.712,  # TRACKED
             anticipation_factor=0.12
         ),
         'V': VisemeParams(
-            jaw_open=0.22, lip_width=0.5, lip_protrusion=0.0,
-            upper_lip_raise=0.08, lower_lip_lower=0.32,
+            jaw_open=0.577,  # Same as F
+            lip_width=1.000,
+            lip_protrusion=0.0,
+            upper_lip_raise=0.08,
+            lower_lip_lower=0.32,
+            corner_pull_horizontal=-0.039,
+            corner_pull_back=0.113,
+            lip_tightness=0.70,
             overshoot_factor=0.08
         ),
 
@@ -97,32 +131,71 @@ class EnhancedLivePortraitVisemes:
             upper_lip_raise=0.10, lower_lip_lower=0.10
         ),
 
-        # Alveolar - INCREASED visibility
+        # Alveolar - TRACKED DATA
         'T': VisemeParams(
-            jaw_open=0.28, lip_width=0.65, lip_protrusion=0.0,
-            corner_pull_horizontal=0.15, overshoot_factor=0.1
+            jaw_open=0.444,  # TRACKED (was 0.28)
+            lip_width=1.000,  # TRACKED
+            lip_protrusion=0.0,
+            upper_lip_raise=0.05,  # ADJUSTED
+            lower_lip_lower=0.05,  # ADJUSTED
+            corner_pull_horizontal=0.110,  # TRACKED
+            corner_pull_back=0.178,  # TRACKED
+            lip_tightness=0.778,  # TRACKED
+            overshoot_factor=0.1
         ),
         'D': VisemeParams(
-            jaw_open=0.30, lip_width=0.65, lip_protrusion=0.0,
-            corner_pull_horizontal=0.15, overshoot_factor=0.1
+            jaw_open=0.495,  # TRACKED (was 0.30)
+            lip_width=1.000,  # TRACKED
+            lip_protrusion=0.0,
+            upper_lip_raise=0.05,
+            lower_lip_lower=0.05,
+            corner_pull_horizontal=-0.110,  # TRACKED
+            corner_pull_back=0.176,  # TRACKED
+            lip_tightness=0.752,  # TRACKED
+            overshoot_factor=0.1
         ),
         'S': VisemeParams(
-            jaw_open=0.22, lip_width=0.70, lip_protrusion=0.0,
-            corner_pull_horizontal=0.20, lip_tightness=0.75
+            jaw_open=0.495,  # TRACKED (was 0.22)
+            lip_width=1.000,  # TRACKED
+            lip_protrusion=0.0,
+            upper_lip_raise=0.05,
+            lower_lip_lower=0.05,
+            corner_pull_horizontal=-0.094,  # TRACKED
+            corner_pull_back=0.168,  # TRACKED
+            lip_tightness=0.753  # TRACKED
         ),
         'Z': VisemeParams(
-            jaw_open=0.22, lip_width=0.70, lip_protrusion=0.0,
-            corner_pull_horizontal=0.20, lip_tightness=0.75
+            jaw_open=0.495,  # Same as S
+            lip_width=1.000,
+            lip_protrusion=0.0,
+            upper_lip_raise=0.05,
+            lower_lip_lower=0.05,
+            corner_pull_horizontal=-0.094,
+            corner_pull_back=0.168,
+            lip_tightness=0.753
         ),
         'N': VisemeParams(
-            jaw_open=0.20, lip_width=0.6, lip_protrusion=0.0
+            jaw_open=0.488,  # TRACKED (was 0.20)
+            lip_width=1.000,  # TRACKED
+            lip_protrusion=0.0,
+            upper_lip_raise=0.03,
+            lower_lip_lower=0.03,
+            corner_pull_horizontal=0.068,  # TRACKED
+            corner_pull_back=0.165,  # TRACKED
+            lip_tightness=0.756  # TRACKED
         ),
         'L': VisemeParams(
-            jaw_open=0.30, lip_width=0.65, lip_protrusion=0.0,
-            corner_pull_horizontal=0.18
+            jaw_open=0.497,  # TRACKED (was 0.30)
+            lip_width=0.996,  # TRACKED
+            lip_protrusion=0.0,
+            upper_lip_raise=0.05,
+            lower_lip_lower=0.05,
+            corner_pull_horizontal=0.252,  # TRACKED
+            corner_pull_back=0.160,  # TRACKED
+            lip_tightness=0.751  # TRACKED
         ),
 
-        # Postalveolar - ENHANCED protrusion
+        # Postalveolar - KEPT MANUAL (not in tracked data)
         'SH': VisemeParams(
             jaw_open=0.28, lip_width=0.30, lip_protrusion=0.50,
             corner_pull_horizontal=-0.15, lip_tightness=0.65,
@@ -141,58 +214,127 @@ class EnhancedLivePortraitVisemes:
             corner_pull_horizontal=-0.10, overshoot_factor=0.12
         ),
 
-        # Velar/Glottal
+        # Velar/Glottal - TRACKED DATA
         'K': VisemeParams(
-            jaw_open=0.25, lip_width=0.6, lip_protrusion=0.0,
+            jaw_open=0.509,  # TRACKED (was 0.25)
+            lip_width=0.992,  # TRACKED
+            lip_protrusion=0.0,
+            upper_lip_raise=0.03,
+            lower_lip_lower=0.03,
+            corner_pull_horizontal=-0.314,  # TRACKED
+            corner_pull_back=0.108,  # TRACKED
+            lip_tightness=0.745,  # TRACKED
             overshoot_factor=0.1
         ),
         'G': VisemeParams(
-            jaw_open=0.28, lip_width=0.6, lip_protrusion=0.0,
+            jaw_open=0.509,  # Same as K
+            lip_width=0.992,
+            lip_protrusion=0.0,
+            upper_lip_raise=0.03,
+            lower_lip_lower=0.03,
+            corner_pull_horizontal=-0.314,
+            corner_pull_back=0.108,
+            lip_tightness=0.745,
             overshoot_factor=0.1
         ),
         'NG': VisemeParams(
-            jaw_open=0.22, lip_width=0.55, lip_protrusion=0.0
+            jaw_open=0.660,  # TRACKED (was 0.22)
+            lip_width=1.000,  # TRACKED
+            lip_protrusion=0.0,
+            upper_lip_raise=0.03,
+            lower_lip_lower=0.03,
+            corner_pull_horizontal=0.539,  # TRACKED
+            corner_pull_back=0.071,  # TRACKED
+            lip_tightness=0.670  # TRACKED
         ),
         'H': VisemeParams(
             jaw_open=0.30, lip_width=0.6, lip_protrusion=0.0
         ),
         'Y': VisemeParams(
-            jaw_open=0.22, lip_width=0.75, lip_protrusion=0.0,
-            corner_pull_horizontal=0.28, anticipation_factor=0.10
+            jaw_open=0.445,  # TRACKED (was 0.22)
+            lip_width=1.000,  # TRACKED
+            lip_protrusion=0.0,
+            upper_lip_raise=0.05,
+            lower_lip_lower=0.05,
+            corner_pull_horizontal=-0.010,  # TRACKED
+            corner_pull_back=0.165,  # TRACKED
+            lip_tightness=0.777,  # TRACKED
+            anticipation_factor=0.10
         ),
 
-        # Approximants - ENHANCED rounding
+        # Approximants - TRACKED DATA
         'W': VisemeParams(
-            jaw_open=0.25, lip_width=0.20, lip_protrusion=0.75,
-            corner_pull_horizontal=-0.22, lip_tightness=0.75,
+            jaw_open=0.364,  # TRACKED (was 0.25)
+            lip_width=1.000,  # TRACKED (was 0.20!)
+            lip_protrusion=0.75,  # KEPT (tracking failed)
+            upper_lip_raise=0.0,
+            lower_lip_lower=0.0,
+            corner_pull_horizontal=-0.028,  # TRACKED
+            corner_pull_back=0.085,  # TRACKED
+            lip_tightness=0.818,  # TRACKED
             anticipation_factor=0.25
         ),
         'R': VisemeParams(
-            jaw_open=0.35, lip_width=0.30, lip_protrusion=0.45,
-            corner_pull_horizontal=-0.08
+            jaw_open=0.755,  # TRACKED (was 0.35)
+            lip_width=0.998,  # TRACKED (was 0.30)
+            lip_protrusion=0.45,  # KEPT
+            upper_lip_raise=0.0,
+            lower_lip_lower=0.0,
+            corner_pull_horizontal=-0.343,  # TRACKED
+            corner_pull_back=0.109,  # TRACKED
+            lip_tightness=0.622  # TRACKED
         ),
         'ER': VisemeParams(
-            jaw_open=0.35, lip_width=0.30, lip_protrusion=0.42,
-            corner_pull_horizontal=-0.08
+            jaw_open=0.397,  # TRACKED (was 0.35)
+            lip_width=1.000,  # TRACKED
+            lip_protrusion=0.42,  # KEPT
+            upper_lip_raise=0.0,
+            lower_lip_lower=0.0,
+            corner_pull_horizontal=-0.162,  # TRACKED
+            corner_pull_back=0.189,  # TRACKED
+            lip_tightness=0.802  # TRACKED
         ),
 
-        # Front Vowels - INCREASED jaw opening
+        # Front Vowels - TRACKED DATA
         'IY': VisemeParams(  # "ee"
-            jaw_open=0.35, lip_width=0.90, lip_protrusion=0.0,
-            corner_pull_horizontal=0.50, corner_pull_back=0.30,
-            lip_tightness=0.65
+            jaw_open=0.460,  # TRACKED (was 0.35)
+            lip_width=1.000,  # TRACKED (was 0.90)
+            lip_protrusion=0.0,
+            upper_lip_raise=0.15,  # ADJUSTED
+            lower_lip_lower=0.05,  # ADJUSTED
+            corner_pull_horizontal=-0.223,  # TRACKED (was 0.50!)
+            corner_pull_back=0.187,  # TRACKED
+            lip_tightness=0.770  # TRACKED
         ),
         'IH': VisemeParams(  # "i"
-            jaw_open=0.40, lip_width=0.80, lip_protrusion=0.0,
-            corner_pull_horizontal=0.38, corner_pull_back=0.20
+            jaw_open=0.460,  # Same as IY
+            lip_width=1.000,
+            lip_protrusion=0.0,
+            upper_lip_raise=0.12,
+            lower_lip_lower=0.05,
+            corner_pull_horizontal=-0.223,
+            corner_pull_back=0.187,
+            lip_tightness=0.770
         ),
         'EY': VisemeParams(  # "ay"
-            jaw_open=0.50, lip_width=0.80, lip_protrusion=0.0,
-            corner_pull_horizontal=0.32, corner_pull_back=0.18
+            jaw_open=0.628,  # TRACKED (was 0.50)
+            lip_width=1.000,  # TRACKED
+            lip_protrusion=0.0,
+            upper_lip_raise=0.10,
+            lower_lip_lower=0.08,
+            corner_pull_horizontal=0.166,  # TRACKED
+            corner_pull_back=0.141,  # TRACKED
+            lip_tightness=0.686  # TRACKED
         ),
         'EH': VisemeParams(  # "e"
-            jaw_open=0.55, lip_width=0.75, lip_protrusion=0.0,
-            corner_pull_horizontal=0.25, corner_pull_back=0.12
+            jaw_open=0.628,  # Same as EY
+            lip_width=1.000,
+            lip_protrusion=0.0,
+            upper_lip_raise=0.10,
+            lower_lip_lower=0.08,
+            corner_pull_horizontal=0.166,
+            corner_pull_back=0.141,
+            lip_tightness=0.686
         ),
         'AE': VisemeParams(  # "a"
             jaw_open=0.68, lip_width=0.80, lip_protrusion=0.0,
@@ -200,18 +342,30 @@ class EnhancedLivePortraitVisemes:
             lower_lip_lower=0.15
         ),
 
-        # Central Vowels
+        # Central Vowels - TRACKED DATA
         'AH': VisemeParams(  # "uh"
-            jaw_open=0.70, lip_width=0.60, lip_protrusion=0.0,
-            corner_pull_horizontal=0.08
+            jaw_open=0.509,  # TRACKED (was 0.70)
+            lip_width=0.999,  # TRACKED
+            lip_protrusion=0.0,
+            upper_lip_raise=0.05,
+            lower_lip_lower=0.05,
+            corner_pull_horizontal=0.062,  # TRACKED
+            corner_pull_back=0.150,  # TRACKED
+            lip_tightness=0.746  # TRACKED
         ),
         'UH': VisemeParams(  # "oo" (book)
-            jaw_open=0.45, lip_width=0.30, lip_protrusion=0.52,
-            corner_pull_horizontal=-0.15
+            jaw_open=0.523,  # TRACKED (was 0.45)
+            lip_width=0.958,  # TRACKED (was 0.30)
+            lip_protrusion=0.52,  # KEPT
+            upper_lip_raise=0.0,
+            lower_lip_lower=0.0,
+            corner_pull_horizontal=-0.421,  # TRACKED
+            corner_pull_back=0.000,  # TRACKED
+            lip_tightness=0.738  # TRACKED
         ),
 
-        # Back Vowels - MAXIMUM opening for "AA"
-        'AA': VisemeParams(  # "ah" - CRITICAL FOR VISIBILITY
+        # Back Vowels - KEPT MANUAL for AA, TRACKED for others
+        'AA': VisemeParams(  # "ah" - KEPT MANUAL (not in tracked data)
             jaw_open=0.95, lip_width=0.55, lip_protrusion=0.0,
             corner_pull_horizontal=0.0, lower_lip_lower=0.28,
             lip_tightness=0.25, overshoot_factor=0.15
@@ -221,8 +375,14 @@ class EnhancedLivePortraitVisemes:
             corner_pull_horizontal=-0.15, lip_tightness=0.55
         ),
         'OW': VisemeParams(  # "o"
-            jaw_open=0.60, lip_width=0.20, lip_protrusion=0.78,
-            corner_pull_horizontal=-0.28, lip_tightness=0.65,
+            jaw_open=0.477,  # TRACKED (was 0.60)
+            lip_width=0.999,  # TRACKED (was 0.20!)
+            lip_protrusion=0.78,  # KEPT (tracking failed)
+            upper_lip_raise=0.0,
+            lower_lip_lower=0.0,
+            corner_pull_horizontal=-0.356,  # TRACKED
+            corner_pull_back=0.143,  # TRACKED
+            lip_tightness=0.762,  # TRACKED
             anticipation_factor=0.20
         ),
         'OY': VisemeParams(  # "oy"
@@ -230,8 +390,14 @@ class EnhancedLivePortraitVisemes:
             corner_pull_horizontal=-0.20
         ),
         'UW': VisemeParams(  # "oo" (food)
-            jaw_open=0.45, lip_width=0.15, lip_protrusion=0.85,
-            corner_pull_horizontal=-0.32, lip_tightness=0.75,
+            jaw_open=0.442,  # TRACKED (was 0.45)
+            lip_width=1.000,  # TRACKED (was 0.15!)
+            lip_protrusion=0.85,  # KEPT (tracking failed)
+            upper_lip_raise=0.0,
+            lower_lip_lower=0.0,
+            corner_pull_horizontal=-0.027,  # TRACKED
+            corner_pull_back=0.145,  # TRACKED
+            lip_tightness=0.779,  # TRACKED
             anticipation_factor=0.22
         ),
 
@@ -241,8 +407,14 @@ class EnhancedLivePortraitVisemes:
             corner_pull_horizontal=0.0
         ),
         'AY': VisemeParams(  # "eye"
-            jaw_open=0.75, lip_width=0.65, lip_protrusion=0.0,
-            corner_pull_horizontal=0.20
+            jaw_open=0.581,  # TRACKED (was 0.75)
+            lip_width=0.993,  # TRACKED
+            lip_protrusion=0.0,
+            upper_lip_raise=0.08,
+            lower_lip_lower=0.08,
+            corner_pull_horizontal=0.077,  # TRACKED
+            corner_pull_back=0.091,  # TRACKED
+            lip_tightness=0.710  # TRACKED
         ),
     }
 

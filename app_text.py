@@ -14,6 +14,7 @@ from src.config.inference_config import InferenceConfig
 from src.config.crop_config import CropConfig
 from src.config.argument_config import ArgumentConfig
 from src.utils.io import load_image_rgb
+import matplotlib.pyplot as plt 
 
 # Initialize configurations
 args = ArgumentConfig()

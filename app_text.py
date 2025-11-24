@@ -553,89 +553,48 @@ with gr.Blocks(theme=gr.themes.Soft(), title="LivePortrait SIMPLIFIED - retarget
             )
 
         # Tab 4: Info
-        with gr.Tab("ℹ️ Information"):
-            gr.Markdown("""
-            ## ✨ SIMPLIFIED Architecture
+        with gr.Tab("📊 Animation Analysis"):
+            gr.Markdown("### Analyze generated animations")
 
-            This version uses **ONLY LivePortrait's `retarget_lip` function** with a **single `lip_open` parameter**.
+            analysis_json = gr.File(label="Upload Metadata JSON", file_types=['.json'])
+            analyze_btn = gr.Button("🔬 Analyze Animation", variant="primary")
 
-            ### Key Simplification
+            with gr.Row():
+                analysis_plot = gr.Image(label="Comprehensive Analysis")
+                analysis_stats = gr.JSON(label="Quality Metrics")
 
-            **Before (Complex):**
-            - 6+ parameters (lip_open, lip_width, mouth_round, lip_upper, lip_lower, teeth_visible)
-            - Manual keypoint manipulation
-            - Complex parameter tuning
+            def analyze_animation(json_file):
+                if not json_file:
+                    return None, None
 
-            **After (SIMPLIFIED):**
-            - **1 parameter**: `lip_open` (0.0 to 0.8)
-            - **1 function**: `retarget_lip(keypoints, combined_ratio)`
-            - Automatic handling of ALL lip deformations
+                from visualize_animation import AnimationVisualizer
 
-            ### How It Works
+                visualizer = AnimationVisualizer(json_file.name)
 
-            ```python
-            # 1. Single input value
-            lip_open = 0.6  # (0.0 to 0.8)
+                # Generate visualization
+                fig = visualizer.plot_comprehensive()
 
-            # 2. Convert to LivePortrait format
-            lip_close_ratio = [[lip_open]]
-            combined_ratio = calc_combined_lip_ratio(lip_close_ratio, landmarks)
+                # Get statistics
+                stats = visualizer.export_statistics()
 
-            # 3. Apply retarget_lip (handles EVERYTHING automatically)
-            lip_delta = retarget_lip(keypoints, combined_ratio)
+                # Convert matplotlib figure to image
+                import io
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+                buf.seek(0)
 
-            # 4. Done! All lip movements are generated
-            new_keypoints = keypoints + lip_delta
-            ```
+                from PIL import Image
+                img = Image.open(buf)
 
-            ### What `retarget_lip` Handles Automatically
+                plt.close(fig)
 
-            - ✅ Vertical mouth opening
-            - ✅ Horizontal lip stretch/compression
-            - ✅ Lip rounding and pursing
-            - ✅ Upper and lower lip positions
-            - ✅ Teeth visibility
-            - ✅ Natural asymmetry
-            - ✅ Realistic deformations
+                return img, stats
 
-            ### Viseme-to-lip_open Mapping
-
-            | Viseme | lip_open | Description |
-            |--------|----------|-------------|
-            | Silence, M/P/B | 0.0 | Lips closed |
-            | F/V | 0.15 | Teeth on lip |
-            | TH, I, W | 0.20 | Slight opening |
-            | L, DD, R | 0.25 | Small opening |
-            | K, U, ER | 0.30 | Medium opening |
-            | E, EI | 0.35 | Medium-large |
-            | O, AI, OW | 0.45-0.50 | Large opening |
-            | AA, AW | 0.60 | Very wide |
-            | Maximum | 0.80 | Extreme opening |
-
-            ### Benefits
-
-            1. **Simplicity**: One slider instead of six
-            2. **Accuracy**: Uses LivePortrait's trained retargeting
-            3. **Natural**: Automatic realistic lip movements
-            4. **Fast**: Less computation, fewer parameters
-            5. **Debuggable**: Easy to understand and tune
-
-            ### Requirements
-
-            ```bash
-            pip install openai-whisper pydub librosa phonemizer
-            ```
-
-            ### Tips
-
-            - Start with viseme presets to learn values
-            - `lip_open=0.0` for consonants like M, P, B
-            - `lip_open=0.2-0.3` for most consonants
-            - `lip_open=0.5-0.6` for open vowels like AA
-            - Enable stitching for smoother blending
-            - `retarget_lip` handles width, rounding, teeth automatically!
-            """)
-
+            analyze_btn.click(
+                fn=analyze_animation,
+                inputs=[analysis_json],
+                outputs=[analysis_plot, analysis_stats]
+            )
 if __name__ == "__main__":
     demo.launch(
         server_port=8890,

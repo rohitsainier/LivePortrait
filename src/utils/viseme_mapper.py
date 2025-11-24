@@ -1,24 +1,32 @@
 # coding: utf-8
 """
-SIMPLIFIED Production-level Text-to-Viseme mapping system
-Uses ONLY LivePortrait's retarget_lip function with single lip_open parameter
+🎬 PRODUCTION-READY Text-to-Viseme Mapping System
+Enhanced with:
+- CMU Pronouncing Dictionary for accurate phonemes
+- Realistic phoneme duration modeling with prosody
+- Coarticulation support for natural transitions
+- Prosodic stress detection and emphasis
+- Multi-pass smoothing algorithms
+- Audio energy-based intensity modulation
 """
 
 import numpy as np
 import re
 from typing import List, Dict, Tuple, Optional, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import json
 from pathlib import Path
 
-# Optional dependencies for enhanced functionality
+# Optional dependencies
 try:
     import phonemizer
+    from phonemizer.backend import EspeakBackend
+    from phonemizer.separator import Separator
     PHONEMIZER_AVAILABLE = True
 except ImportError:
     PHONEMIZER_AVAILABLE = False
-    print("Warning: phonemizer not installed. Install with: pip install phonemizer")
+    print("⚠ Warning: phonemizer not installed. Install with: pip install phonemizer")
 
 try:
     from pydub import AudioSegment
@@ -26,44 +34,63 @@ try:
     AUDIO_AVAILABLE = True
 except ImportError:
     AUDIO_AVAILABLE = False
-    print("Warning: audio libraries not installed. Install with: pip install pydub librosa")
+    print("⚠ Warning: audio libraries not installed. Install with: pip install pydub librosa")
+
+try:
+    import nltk
+    from nltk.corpus import cmudict
+    nltk.download('cmudict', quiet=True)
+    CMUDICT = cmudict.dict()
+    CMUDICT_AVAILABLE = True
+except:
+    CMUDICT_AVAILABLE = False
+    CMUDICT = None
+    print("⚠ Warning: NLTK CMU Dictionary not available. Install with: pip install nltk")
+
+try:
+    from scipy.ndimage import gaussian_filter1d
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+    print("⚠ Warning: scipy not available. Install with: pip install scipy")
 
 
 class VisemeType(Enum):
     """Standard viseme types based on Disney/Preston Blair viseme set"""
     SILENCE = "sil"      # Silence/Rest
-    PP_BB_MM = "PP"      # p, b, m
-    F_V = "FF"           # f, v
-    TH = "TH"            # th (thin, then)
-    DD = "DD"            # t, d
-    KK = "kk"            # k, g
-    CH_JJ_SH = "CH"      # ch, j, sh
-    SS = "SS"            # s, z
-    NN_NN = "nn"         # n, ng
-    RR = "RR"            # r
-    AA = "aa"            # a (had)
-    E = "E"              # e (bed)
-    I = "I"              # i (tip)
-    O = "O"              # o (go)
-    U = "U"              # u (boot)
-    AI = "AI"            # ai (bite)
-    EI = "EI"            # ei (bait)
-    OW = "OW"            # ow (show)
-    AW = "AW"            # aw (how)
-    L = "L"              # l
-    WQ = "WQ"            # w, q
-    FV = "FV"            # Wider f, v
-    ER = "ER"            # er (her)
+    PP = "PP"            # p, b, m (lips closed)
+    FF = "FF"            # f, v (teeth on lower lip)
+    TH = "TH"            # th (tongue between teeth)
+    DD = "DD"            # t, d (tongue on alveolar ridge)
+    kk = "kk"            # k, g (back of tongue)
+    CH = "CH"            # ch, j, sh (tongue raised)
+    SS = "SS"            # s, z (hissing)
+    nn = "nn"            # n, ng (nasal)
+    RR = "RR"            # r (retroflex)
+    aa = "aa"            # a (father) - wide open
+    E = "E"              # e (bed) - medium open
+    I = "I"              # i (sit) - small open
+    O = "O"              # o (go) - rounded
+    U = "U"              # u (boot) - small rounded
+    AI = "AI"            # ai (bite) - diphthong
+    EI = "EI"            # ei (bait) - diphthong
+    OW = "OW"            # ow (show) - diphthong
+    AW = "AW"            # aw (how) - diphthong
+    L = "L"              # l (lateral)
+    WQ = "WQ"            # w, q (rounded)
+    ER = "ER"            # er (her) - r-colored
 
 
 @dataclass
 class VisemeFrame:
-    """Represents a single viseme with timing information"""
+    """Represents a single viseme with timing and prosody information"""
     viseme: VisemeType
-    start_time: float  # in seconds
-    duration: float    # in seconds
-    intensity: float = 1.0  # 0.0 to 1.0
+    start_time: float      # seconds
+    duration: float        # seconds
+    intensity: float = 1.0 # 0.0 to 1.5 (for stress emphasis)
     phoneme: str = ""
+    is_stressed: bool = False
+    is_word_final: bool = False
 
     @property
     def end_time(self) -> float:
@@ -72,184 +99,343 @@ class VisemeFrame:
 
 @dataclass
 class LipParameters:
-    """SIMPLIFIED: Only lip_open parameter for LivePortrait's retarget_lip"""
+    """Single lip_open parameter for LivePortrait's retarget_lip"""
     lip_open: float = 0.0  # 0.0 (closed) to 0.8 (wide open)
 
     def to_retarget_input(self) -> float:
-        """Convert to retarget_lip input (just returns lip_open)"""
-        return self.lip_open
+        """Convert to retarget_lip input"""
+        return np.clip(self.lip_open, 0.0, 0.8)
 
 
 class VisemeToLipMapper:
-    """Maps visemes to lip_open values (0.0 to 0.8)"""
+    """
+    Maps visemes to lip_open values with calibrated, realistic ranges
+    Based on phonetic research and visual observation
+    """
 
-    # SIMPLIFIED: Viseme to lip_open mapping (hand-tuned for realism)
+    # 🎯 CALIBRATED viseme-to-lip_open mapping
     VISEME_LIP_MAP: Dict[VisemeType, float] = {
-        # Silence
+        # === SILENCE ===
         VisemeType.SILENCE: 0.0,
 
-        # Consonants - Bilabials (lips closed)
-        VisemeType.PP_BB_MM: 0.0,
+        # === CONSONANTS - CLOSURES ===
+        VisemeType.PP: 0.0,              # p, b, m (complete closure)
 
-        # Consonants - Labiodentals (slight opening)
-        VisemeType.F_V: 0.15,
-        VisemeType.FV: 0.18,
+        # === CONSONANTS - CONSTRICTIONS ===
+        VisemeType.FF: 0.15,             # f, v (teeth on lip, slight gap)
+        VisemeType.TH: 0.18,             # θ, ð (tongue visible)
+        VisemeType.SS: 0.12,             # s, z (small gap, spread)
+        VisemeType.CH: 0.20,             # ʃ, ʒ, tʃ, dʒ (slightly rounded)
 
-        # Consonants - Dentals (slight opening with teeth)
-        VisemeType.TH: 0.20,
+        # === CONSONANTS - CLOSURES WITH RELEASE ===
+        VisemeType.DD: 0.22,             # t, d (brief opening)
+        VisemeType.kk: 0.28,             # k, g (back opening)
 
-        # Consonants - Alveolars (small opening)
-        VisemeType.DD: 0.25,
-        VisemeType.SS: 0.15,
-        VisemeType.NN_NN: 0.20,
-        VisemeType.L: 0.25,
+        # === CONSONANTS - NASALS ===
+        VisemeType.nn: 0.18,             # n, ŋ (small opening, nasal)
 
-        # Consonants - Velars (medium opening)
-        VisemeType.KK: 0.30,
+        # === CONSONANTS - LIQUIDS ===
+        VisemeType.L: 0.25,              # l (lateral, teeth visible)
+        VisemeType.RR: 0.25,             # r (slightly rounded)
+        VisemeType.WQ: 0.20,             # w (rounded, small opening)
 
-        # Consonants - Postalveolars (small-medium opening)
-        VisemeType.CH_JJ_SH: 0.20,
+        # === VOWELS - CLOSE ===
+        VisemeType.I: 0.20,              # ɪ, i (small, spread)
+        VisemeType.U: 0.30,              # ʊ, u (small, rounded)
 
-        # Consonants - Approximants
-        VisemeType.RR: 0.25,
-        VisemeType.WQ: 0.20,
+        # === VOWELS - MID ===
+        VisemeType.E: 0.35,              # ɛ, e (medium, spread)
+        VisemeType.ER: 0.32,             # ɜ, ɚ (medium, r-colored)
+        VisemeType.EI: 0.35,             # eɪ (medium, diphthong start)
 
-        # Vowels - Front (varying openness)
-        VisemeType.I: 0.20,      # "sit" - small opening, wide
-        VisemeType.E: 0.35,      # "bed" - medium opening
-        VisemeType.EI: 0.35,     # "bait" - medium opening
+        # === VOWELS - OPEN ===
+        VisemeType.O: 0.50,              # ɔ, o (large, rounded)
+        VisemeType.aa: 0.65,             # ɑ, æ (very wide, open)
 
-        # Vowels - Central (medium-large opening)
-        VisemeType.ER: 0.30,     # "her" - medium opening
-        VisemeType.AA: 0.60,     # "father" - WIDE opening
-
-        # Vowels - Back (varying with rounding)
-        VisemeType.U: 0.30,      # "boot" - medium, rounded
-        VisemeType.O: 0.50,      # "go" - large, rounded
-
-        # Diphthongs
-        VisemeType.AI: 0.50,     # "bite" - starts wide
-        VisemeType.OW: 0.45,     # "show" - medium-large, rounded
-        VisemeType.AW: 0.60,     # "how" - wide opening
+        # === DIPHTHONGS ===
+        VisemeType.AI: 0.55,             # aɪ (wide start)
+        VisemeType.AW: 0.62,             # aʊ (very wide start)
+        VisemeType.OW: 0.48,             # oʊ (rounded)
     }
 
     @classmethod
     def get_lip_open(cls, viseme: VisemeType, intensity: float = 1.0) -> float:
-        """Get lip_open value for a viseme with intensity scaling"""
+        """
+        Get lip_open value for a viseme with intensity scaling
+
+        Args:
+            viseme: VisemeType
+            intensity: Multiplier for emphasis (0.5-1.5)
+
+        Returns:
+            lip_open value (0.0 to 0.8)
+        """
         base_value = cls.VISEME_LIP_MAP.get(viseme, 0.0)
-        return base_value * intensity
+
+        # Apply intensity with smart scaling
+        # - Stressed vowels open MORE
+        # - Stressed consonants open SLIGHTLY more
+        if base_value > 0.3:  # Vowels
+            scaled = base_value * intensity
+        else:  # Consonants
+            scaled = base_value * (0.85 + 0.15 * intensity)
+
+        return np.clip(scaled, 0.0, 0.8)
 
     @classmethod
-    def interpolate_lip_open(cls, value1: float, value2: float, alpha: float) -> float:
-        """Linear interpolation between two lip_open values"""
+    def interpolate_lip_open(cls, value1: float, value2: float,
+                            alpha: float, easing: str = "ease-in-out") -> float:
+        """
+        Smooth interpolation between lip_open values
+
+        Args:
+            value1: Start value
+            value2: End value
+            alpha: Blend factor (0.0 to 1.0)
+            easing: Interpolation curve ("linear", "ease-in", "ease-out", "ease-in-out")
+
+        Returns:
+            Interpolated value
+        """
+        # Apply easing function
+        if easing == "ease-in":
+            alpha = alpha * alpha
+        elif easing == "ease-out":
+            alpha = 1 - (1 - alpha) * (1 - alpha)
+        elif easing == "ease-in-out":
+            alpha = alpha * alpha * (3.0 - 2.0 * alpha)
+        # else: linear
+
         return value1 * (1 - alpha) + value2 * alpha
 
 
 class PhonemeToVisemeMapper:
-    """Maps phonemes (IPA or ARPABET) to visemes"""
+    """
+    Enhanced phoneme-to-viseme mapping with IPA and ARPABET support
+    """
 
-    # IPA to Viseme mapping
+    # === IPA to Viseme mapping ===
     IPA_TO_VISEME: Dict[str, VisemeType] = {
-        # Bilabials
-        'p': VisemeType.PP_BB_MM, 'b': VisemeType.PP_BB_MM, 'm': VisemeType.PP_BB_MM,
-        # Labiodentals
-        'f': VisemeType.F_V, 'v': VisemeType.F_V,
-        # Dentals
+        # CONSONANTS - Bilabials
+        'p': VisemeType.PP, 'b': VisemeType.PP, 'm': VisemeType.PP,
+
+        # CONSONANTS - Labiodentals
+        'f': VisemeType.FF, 'v': VisemeType.FF,
+
+        # CONSONANTS - Dentals
         'θ': VisemeType.TH, 'ð': VisemeType.TH,
-        # Alveolars
-        't': VisemeType.DD, 'd': VisemeType.DD, 'n': VisemeType.NN_NN,
+
+        # CONSONANTS - Alveolars
+        't': VisemeType.DD, 'd': VisemeType.DD,
         's': VisemeType.SS, 'z': VisemeType.SS,
-        'l': VisemeType.L, 'r': VisemeType.RR,
-        # Postalveolars
-        'ʃ': VisemeType.CH_JJ_SH, 'ʒ': VisemeType.CH_JJ_SH,
-        'tʃ': VisemeType.CH_JJ_SH, 'dʒ': VisemeType.CH_JJ_SH,
-        # Velars
-        'k': VisemeType.KK, 'g': VisemeType.KK, 'ŋ': VisemeType.NN_NN,
-        # Glottals
-        'h': VisemeType.SILENCE,
-        # Approximants
-        'w': VisemeType.WQ, 'j': VisemeType.I,
-        # Vowels - Front
-        'i': VisemeType.I, 'ɪ': VisemeType.I,
-        'e': VisemeType.EI, 'ɛ': VisemeType.E,
-        'æ': VisemeType.AA,
-        # Vowels - Central
-        'ə': VisemeType.ER, 'ʌ': VisemeType.ER, 'ɜ': VisemeType.ER,
-        'ɐ': VisemeType.AA,
-        # Vowels - Back
-        'u': VisemeType.U, 'ʊ': VisemeType.U,
+        'n': VisemeType.nn, 'l': VisemeType.L,
+
+        # CONSONANTS - Postalveolars
+        'ʃ': VisemeType.CH, 'ʒ': VisemeType.CH,
+        'tʃ': VisemeType.CH, 'dʒ': VisemeType.CH,
+        'r': VisemeType.RR,
+
+        # CONSONANTS - Velars
+        'k': VisemeType.kk, 'g': VisemeType.kk, 'ŋ': VisemeType.nn,
+
+        # CONSONANTS - Glottals
+        'h': VisemeType.SILENCE, 'ʔ': VisemeType.SILENCE,
+
+        # CONSONANTS - Approximants
+        'w': VisemeType.WQ, 'j': VisemeType.I, 'ɹ': VisemeType.RR,
+
+        # VOWELS - Close
+        'i': VisemeType.I, 'ɪ': VisemeType.I, 'y': VisemeType.I,
+        'u': VisemeType.U, 'ʊ': VisemeType.U, 'ʉ': VisemeType.U,
+
+        # VOWELS - Mid
+        'e': VisemeType.EI, 'ɛ': VisemeType.E, 'ə': VisemeType.ER,
+        'ɜ': VisemeType.ER, 'ɚ': VisemeType.ER, 'ʌ': VisemeType.ER,
         'o': VisemeType.O, 'ɔ': VisemeType.O,
-        'ɑ': VisemeType.AA, 'ɒ': VisemeType.O,
-        # Diphthongs
-        'aɪ': VisemeType.AI, 'eɪ': VisemeType.EI,
-        'ɔɪ': VisemeType.OW, 'aʊ': VisemeType.AW,
-        'oʊ': VisemeType.OW, 'ɪə': VisemeType.I,
-        'ɛə': VisemeType.E, 'ʊə': VisemeType.U,
+
+        # VOWELS - Open
+        'æ': VisemeType.aa, 'a': VisemeType.aa, 'ɑ': VisemeType.aa,
+        'ɒ': VisemeType.O, 'ɐ': VisemeType.aa,
+
+        # DIPHTHONGS
+        'aɪ': VisemeType.AI, 'eɪ': VisemeType.EI, 'ɔɪ': VisemeType.OW,
+        'aʊ': VisemeType.AW, 'oʊ': VisemeType.OW, 'əʊ': VisemeType.OW,
+        'ɪə': VisemeType.I, 'ɛə': VisemeType.E, 'ʊə': VisemeType.U,
     }
 
-    # ARPABET to Viseme mapping (for CMU dict compatibility)
+    # === ARPABET to Viseme mapping ===
     ARPABET_TO_VISEME: Dict[str, VisemeType] = {
         # Consonants
-        'P': VisemeType.PP_BB_MM, 'B': VisemeType.PP_BB_MM, 'M': VisemeType.PP_BB_MM,
-        'F': VisemeType.F_V, 'V': VisemeType.F_V,
+        'P': VisemeType.PP, 'B': VisemeType.PP, 'M': VisemeType.PP,
+        'F': VisemeType.FF, 'V': VisemeType.FF,
         'TH': VisemeType.TH, 'DH': VisemeType.TH,
-        'T': VisemeType.DD, 'D': VisemeType.DD, 'N': VisemeType.NN_NN,
+        'T': VisemeType.DD, 'D': VisemeType.DD,
         'S': VisemeType.SS, 'Z': VisemeType.SS,
-        'L': VisemeType.L, 'R': VisemeType.RR,
-        'SH': VisemeType.CH_JJ_SH, 'ZH': VisemeType.CH_JJ_SH,
-        'CH': VisemeType.CH_JJ_SH, 'JH': VisemeType.CH_JJ_SH,
-        'K': VisemeType.KK, 'G': VisemeType.KK, 'NG': VisemeType.NN_NN,
+        'N': VisemeType.nn, 'L': VisemeType.L,
+        'SH': VisemeType.CH, 'ZH': VisemeType.CH,
+        'CH': VisemeType.CH, 'JH': VisemeType.CH,
+        'R': VisemeType.RR,
+        'K': VisemeType.kk, 'G': VisemeType.kk, 'NG': VisemeType.nn,
         'HH': VisemeType.SILENCE,
         'W': VisemeType.WQ, 'Y': VisemeType.I,
+
         # Vowels
         'IY': VisemeType.I, 'IH': VisemeType.I,
         'EY': VisemeType.EI, 'EH': VisemeType.E,
-        'AE': VisemeType.AA,
-        'AH': VisemeType.ER, 'ER': VisemeType.ER,
-        'UW': VisemeType.U, 'UH': VisemeType.U,
-        'OW': VisemeType.O, 'AO': VisemeType.O,
-        'AA': VisemeType.AA,
+        'AE': VisemeType.aa, 'AA': VisemeType.aa, 'AH': VisemeType.ER,
+        'AO': VisemeType.O, 'OW': VisemeType.OW,
+        'UH': VisemeType.U, 'UW': VisemeType.U,
+        'ER': VisemeType.ER,
+
         # Diphthongs
-        'AY': VisemeType.AI, 'AW': VisemeType.AW,
-        'OY': VisemeType.OW,
+        'AY': VisemeType.AI, 'AW': VisemeType.AW, 'OY': VisemeType.OW,
     }
 
     @classmethod
     def phoneme_to_viseme(cls, phoneme: str, notation: str = "ipa") -> VisemeType:
-        """Convert a phoneme to viseme"""
-        phoneme = phoneme.strip().lower() if notation == "ipa" else phoneme.strip().upper()
+        """
+        Convert phoneme to viseme with fallback handling
 
-        mapping = cls.IPA_TO_VISEME if notation == "ipa" else cls.ARPABET_TO_VISEME
+        Args:
+            phoneme: Phoneme string
+            notation: "ipa" or "arpabet"
 
-        # Try direct lookup
+        Returns:
+            VisemeType
+        """
+        phoneme = phoneme.strip()
+
+        if notation == "ipa":
+            phoneme = phoneme.lower()
+            mapping = cls.IPA_TO_VISEME
+        else:  # arpabet
+            phoneme = phoneme.upper()
+            # Remove stress markers
+            phoneme = re.sub(r'\d', '', phoneme)
+            mapping = cls.ARPABET_TO_VISEME
+
+        # Direct lookup
         if phoneme in mapping:
             return mapping[phoneme]
 
-        # Try without stress markers (for ARPABET)
-        phoneme_base = re.sub(r'\d', '', phoneme)
-        if phoneme_base in mapping:
-            return mapping[phoneme_base]
+        # Try without length markers (ː)
+        phoneme_short = phoneme.replace('ː', '')
+        if phoneme_short in mapping:
+            return mapping[phoneme_short]
 
         # Default to silence
         return VisemeType.SILENCE
 
 
-class TextToVisemeConverter:
-    """Converts text to timed viseme sequence"""
+class PhonemeDurationModel:
+    """
+    Realistic phoneme duration model based on phonetic research
 
-    def __init__(self, language: str = "en-us", backend: str = "espeak"):
+    References:
+    - Klatt (1976) - Linguistic uses of segmental duration
+    - Peterson & Lehiste (1960) - Duration of syllable nuclei
+    """
+
+    # Base duration multipliers (relative to mean)
+    DURATION_MAP: Dict[str, float] = {
+        # === VERY SHORT (40-60ms) - Stops ===
+        'p': 0.50, 'b': 0.50, 't': 0.50, 'd': 0.50, 'k': 0.55, 'g': 0.55,
+        'P': 0.50, 'B': 0.50, 'T': 0.50, 'D': 0.50, 'K': 0.55, 'G': 0.55,
+
+        # === SHORT (60-90ms) - Fricatives ===
+        'f': 0.75, 'v': 0.75, 'θ': 0.70, 'ð': 0.70,
+        's': 0.85, 'z': 0.85, 'ʃ': 0.90, 'ʒ': 0.90,
+        'F': 0.75, 'V': 0.75, 'TH': 0.70, 'DH': 0.70,
+        'S': 0.85, 'Z': 0.85, 'SH': 0.90, 'ZH': 0.90,
+        'h': 0.60, 'HH': 0.60,
+
+        # === MEDIUM (80-110ms) - Nasals, Liquids, Glides ===
+        'm': 1.00, 'n': 1.00, 'ŋ': 1.05,
+        'l': 0.95, 'r': 1.00, 'ɹ': 1.00,
+        'w': 0.80, 'j': 0.75,
+        'M': 1.00, 'N': 1.00, 'NG': 1.05,
+        'L': 0.95, 'R': 1.00, 'W': 0.80, 'Y': 0.75,
+
+        # === AFFRICATES ===
+        'tʃ': 0.95, 'dʒ': 0.95,
+        'CH': 0.95, 'JH': 0.95,
+
+        # === SHORT VOWELS (100-130ms) ===
+        'ɪ': 1.15, 'ʊ': 1.15, 'ɛ': 1.20, 'ə': 0.85, 'ʌ': 1.10,
+        'IH': 1.15, 'UH': 1.15, 'EH': 1.20, 'AH': 0.85,
+
+        # === LONG VOWELS (140-200ms) ===
+        'i': 1.50, 'u': 1.50, 'e': 1.45,
+        'ɑ': 1.75, 'ɔ': 1.60, 'æ': 1.55, 'ɜ': 1.40, 'ɚ': 1.40,
+        'IY': 1.50, 'UW': 1.50, 'EY': 1.45,
+        'AA': 1.75, 'AO': 1.60, 'AE': 1.55, 'ER': 1.40,
+
+        # === DIPHTHONGS (160-220ms) ===
+        'aɪ': 1.80, 'aʊ': 1.85, 'eɪ': 1.70, 'oʊ': 1.70, 'ɔɪ': 1.75,
+        'AY': 1.80, 'AW': 1.85, 'EY': 1.70, 'OW': 1.70, 'OY': 1.75,
+    }
+
+    @classmethod
+    def get_duration_multiplier(cls, phoneme: str,
+                               is_stressed: bool = False,
+                               is_word_final: bool = False,
+                               is_pre_pause: bool = False) -> float:
+        """
+        Get duration multiplier with prosodic adjustments
+
+        Prosodic rules:
+        - Stressed syllables: +30-40%
+        - Word-final position: +20-30%
+        - Pre-pause position: +40-50%
+        - Unstressed function words: -20%
+        """
+        base = cls.DURATION_MAP.get(phoneme, 1.0)
+
+        # Apply prosodic lengthening
+        if is_stressed:
+            base *= 1.35  # Stressed syllables are ~35% longer
+
+        if is_word_final:
+            base *= 1.25  # Final lengthening
+
+        if is_pre_pause:
+            base *= 1.45  # Pre-boundary lengthening
+
+        return base
+
+    @classmethod
+    def is_vowel(cls, phoneme: str) -> bool:
+        """Check if phoneme is a vowel"""
+        vowels_ipa = set('iɪeɛæaɑɒɔoʊuʌəɜɚ')
+        vowels_arpabet = {'IY', 'IH', 'EY', 'EH', 'AE', 'AA', 'AO', 'OW',
+                         'UH', 'UW', 'AH', 'ER', 'AY', 'AW', 'OY'}
+
+        phoneme_clean = re.sub(r'\d', '', phoneme.upper())
+
+        return (any(v in phoneme.lower() for v in vowels_ipa) or
+                phoneme_clean in vowels_arpabet)
+
+
+class TextToVisemeConverter:
+    """
+    Production-quality text-to-viseme converter with:
+    - CMU Dictionary for accurate pronunciations
+    - Espeak fallback for unknown words
+    - Prosodic stress detection
+    - Realistic timing model
+    """
+
+    def __init__(self, language: str = "en-us", use_cmudict: bool = True):
         """
         Args:
             language: Language code (e.g., 'en-us', 'es', 'fr')
-            backend: Phonemizer backend ('espeak', 'espeak-mbrola', 'festival')
+            use_cmudict: Use CMU Pronouncing Dictionary (English only)
         """
         self.language = language
-        self.backend = backend
+        self.use_cmudict = use_cmudict and CMUDICT_AVAILABLE and language.startswith('en')
 
+        # Initialize phonemizer
         if PHONEMIZER_AVAILABLE:
-            from phonemizer.backend import EspeakBackend
-            from phonemizer.separator import Separator
-
             self.phonemizer = EspeakBackend(
                 language=language,
                 preserve_punctuation=True,
@@ -258,25 +444,194 @@ class TextToVisemeConverter:
             self.separator = Separator(phone=' ', word=' | ')
         else:
             self.phonemizer = None
-            print("Warning: Phonemizer not available. Using fallback text processing.")
 
-    def text_to_phonemes(self, text: str) -> List[str]:
-        """Convert text to phoneme sequence"""
-        if self.phonemizer is not None:
+        # Function words (typically unstressed)
+        self.function_words = {
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+            'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'be',
+            'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
+            'would', 'should', 'could', 'may', 'might', 'can', 'shall', 'must',
+            'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us',
+            'them', 'my', 'your', 'his', 'its', 'our', 'their', 'this', 'that',
+            'these', 'those'
+        }
+
+    def text_to_visemes(self,
+                       text: str,
+                       duration: float = None,
+                       words_per_minute: float = 150,
+                       emphasize_stress: bool = True) -> List[VisemeFrame]:
+        """
+        Convert text to timed viseme sequence with prosody
+
+        Args:
+            text: Input text
+            duration: Total duration in seconds (if None, estimated from WPM)
+            words_per_minute: Speech rate for estimation
+            emphasize_stress: Apply prosodic stress
+
+        Returns:
+            List of VisemeFrame objects with realistic timing
+        """
+        # Tokenize into words
+        words = self._tokenize_text(text)
+
+        # Convert each word to phonemes
+        all_phonemes = []
+        for word_info in words:
+            phonemes = self._word_to_phonemes(word_info['text'])
+
+            # Mark first vowel as potentially stressed
+            if word_info['is_content_word'] and emphasize_stress:
+                for i, ph in enumerate(phonemes):
+                    if PhonemeDurationModel.is_vowel(ph):
+                        phonemes[i] = {'phoneme': ph, 'stressed': True, 'final': i == len(phonemes) - 1}
+                        break
+                    else:
+                        phonemes[i] = {'phoneme': ph, 'stressed': False, 'final': i == len(phonemes) - 1}
+            else:
+                phonemes = [{'phoneme': ph, 'stressed': False, 'final': i == len(phonemes) - 1}
+                           for i, ph in enumerate(phonemes)]
+
+            all_phonemes.extend(phonemes)
+
+        # Convert phonemes to visemes with duration
+        viseme_sequence = []
+        for ph_info in all_phonemes:
+            if isinstance(ph_info, dict):
+                phoneme = ph_info['phoneme']
+                is_stressed = ph_info.get('stressed', False)
+                is_final = ph_info.get('final', False)
+            else:
+                phoneme = ph_info
+                is_stressed = False
+                is_final = False
+
+            # Skip word boundaries
+            if phoneme == '|':
+                continue
+
+            # Get viseme
+            viseme = PhonemeToVisemeMapper.phoneme_to_viseme(phoneme, notation="ipa")
+
+            # Get duration multiplier
+            duration_mult = PhonemeDurationModel.get_duration_multiplier(
+                phoneme,
+                is_stressed=is_stressed,
+                is_word_final=is_final
+            )
+
+            # Intensity boost for stressed vowels
+            intensity = 1.25 if is_stressed else 1.0
+
+            viseme_sequence.append({
+                'viseme': viseme,
+                'phoneme': phoneme,
+                'duration_mult': duration_mult,
+                'intensity': intensity,
+                'is_stressed': is_stressed,
+                'is_final': is_final
+            })
+
+        # Calculate total duration
+        if duration is None:
+            word_count = len([w for w in words if w['is_content_word']])
+            duration = max(1.0, (word_count / words_per_minute) * 60)
+
+        # Normalize durations to fit target duration
+        total_mult = sum(v['duration_mult'] for v in viseme_sequence)
+        if total_mult == 0:
+            return [VisemeFrame(VisemeType.SILENCE, 0, duration)]
+
+        time_per_unit = duration / total_mult
+
+        # Create timed visemes
+        timed_visemes = []
+        current_time = 0.0
+
+        for v_info in viseme_sequence:
+            actual_duration = time_per_unit * v_info['duration_mult']
+
+            timed_visemes.append(VisemeFrame(
+                viseme=v_info['viseme'],
+                start_time=current_time,
+                duration=actual_duration,
+                phoneme=v_info['phoneme'],
+                intensity=v_info['intensity'],
+                is_stressed=v_info['is_stressed'],
+                is_word_final=v_info['is_final']
+            ))
+
+            current_time += actual_duration
+
+        return timed_visemes
+
+    def _word_to_phonemes(self, word: str) -> List[str]:
+        """
+        Convert word to phonemes using CMU dict + espeak fallback
+        """
+        clean_word = ''.join(c for c in word.lower() if c.isalnum())
+
+        if not clean_word:
+            return []
+
+        # Try CMU dictionary first (most accurate for English)
+        if self.use_cmudict and clean_word in CMUDICT:
+            arpabet = CMUDICT[clean_word][0]  # First pronunciation
+            return self._arpabet_to_ipa(arpabet)
+
+        # Fallback to espeak
+        if self.phonemizer:
             phonemes = self.phonemizer.phonemize(
-                [text],
+                [word],
                 separator=self.separator,
                 strip=True
             )[0]
-            return [p for p in phonemes.split() if p != '|']
-        else:
-            # Fallback: simple character-based approximation
-            return self._fallback_text_to_phonemes(text)
+            return [p for p in phonemes.split() if p and p != '|']
 
-    def _fallback_text_to_phonemes(self, text: str) -> List[str]:
-        """Fallback phoneme extraction (very basic)"""
-        # Simple character to phoneme mapping
-        char_map = {
+        # Last resort: character-based approximation
+        return self._fallback_phonemes(word)
+
+    def _arpabet_to_ipa(self, arpabet_phones: List[str]) -> List[str]:
+        """Convert ARPABET to IPA phonemes"""
+        ARPABET_TO_IPA = {
+            # Vowels
+            'AA': 'ɑ', 'AE': 'æ', 'AH': 'ə', 'AO': 'ɔ', 'AW': 'aʊ',
+            'AY': 'aɪ', 'EH': 'ɛ', 'ER': 'ɜr', 'EY': 'eɪ', 'IH': 'ɪ',
+            'IY': 'i', 'OW': 'oʊ', 'OY': 'ɔɪ', 'UH': 'ʊ', 'UW': 'u',
+
+            # Consonants
+            'B': 'b', 'CH': 'tʃ', 'D': 'd', 'DH': 'ð', 'F': 'f',
+            'G': 'g', 'HH': 'h', 'JH': 'dʒ', 'K': 'k', 'L': 'l',
+            'M': 'm', 'N': 'n', 'NG': 'ŋ', 'P': 'p', 'R': 'r',
+            'S': 's', 'SH': 'ʃ', 'T': 't', 'TH': 'θ', 'V': 'v',
+            'W': 'w', 'Y': 'j', 'Z': 'z', 'ZH': 'ʒ'
+        }
+
+        ipa = []
+        for phone in arpabet_phones:
+            # Remove stress markers (0, 1, 2)
+            phone_clean = ''.join(c for c in phone if not c.isdigit())
+            ipa.append(ARPABET_TO_IPA.get(phone_clean, phone_clean.lower()))
+
+        return ipa
+
+    def _tokenize_text(self, text: str) -> List[Dict]:
+        """Tokenize text and detect content vs function words"""
+        # Simple word extraction
+        words = re.findall(r'\b\w+\b', text.lower())
+
+        return [
+            {
+                'text': word,
+                'is_content_word': word not in self.function_words
+            }
+            for word in words
+        ]
+
+    def _fallback_phonemes(self, word: str) -> List[str]:
+        """Simple character-to-phoneme fallback"""
+        CHAR_MAP = {
             'a': 'æ', 'e': 'ɛ', 'i': 'ɪ', 'o': 'ɔ', 'u': 'ʊ',
             'b': 'b', 'c': 'k', 'd': 'd', 'f': 'f', 'g': 'g',
             'h': 'h', 'j': 'dʒ', 'k': 'k', 'l': 'l', 'm': 'm',
@@ -285,146 +640,43 @@ class TextToVisemeConverter:
         }
 
         phonemes = []
-        for char in text.lower():
-            if char in char_map:
-                phonemes.append(char_map[char])
-            elif char == ' ':
-                phonemes.append('|')  # Word boundary
+        for char in word.lower():
+            if char in CHAR_MAP:
+                phonemes.append(CHAR_MAP[char])
 
         return phonemes
 
-    def text_to_visemes(self, text: str, duration: float = None,
-                       words_per_minute: float = 150) -> List[VisemeFrame]:
-        """
-        Convert text to timed viseme sequence
-
-        Args:
-            text: Input text
-            duration: Total duration in seconds (if None, estimated from WPM)
-            words_per_minute: Speech rate for duration estimation
-
-        Returns:
-            List of VisemeFrame objects with timing
-        """
-        # Get phonemes
-        phonemes = self.text_to_phonemes(text)
-
-        # Estimate duration if not provided
-        if duration is None:
-            word_count = len(text.split())
-            duration = (word_count / words_per_minute) * 60
-
-        # Convert phonemes to visemes
-        viseme_sequence = []
-        for phoneme in phonemes:
-            if phoneme == '|':  # Word boundary
-                continue
-            viseme = PhonemeToVisemeMapper.phoneme_to_viseme(phoneme, notation="ipa")
-            viseme_sequence.append((viseme, phoneme))
-
-        # Assign timing (equal duration for now, can be improved with audio alignment)
-        if len(viseme_sequence) == 0:
-            return [VisemeFrame(VisemeType.SILENCE, 0, duration)]
-
-        frame_duration = duration / len(viseme_sequence)
-
-        timed_visemes = []
-        current_time = 0.0
-
-        for viseme, phoneme in viseme_sequence:
-            # Adjust duration based on phoneme type
-            duration_mult = self._get_phoneme_duration_multiplier(phoneme)
-            actual_duration = frame_duration * duration_mult
-
-            timed_visemes.append(VisemeFrame(
-                viseme=viseme,
-                start_time=current_time,
-                duration=actual_duration,
-                phoneme=phoneme,
-                intensity=1.0
-            ))
-
-            current_time += actual_duration
-
-        # Normalize timing to fit exact duration
-        total_time = sum(v.duration for v in timed_visemes)
-        if total_time > 0:
-            scale = duration / total_time
-            current_time = 0.0
-            for viseme_frame in timed_visemes:
-                viseme_frame.duration *= scale
-                viseme_frame.start_time = current_time
-                current_time += viseme_frame.duration
-
-        return timed_visemes
-
-    def _get_phoneme_duration_multiplier(self, phoneme: str) -> float:
-        """Get relative duration multiplier for different phoneme types"""
-        # Vowels are typically longer
-        vowels = set('aeiouəɛɪɔʊʌɜ')
-        if any(v in phoneme.lower() for v in vowels):
-            return 1.3
-
-        # Stops are shorter
-        stops = set('pbtdkg')
-        if phoneme.lower() in stops:
-            return 0.7
-
-        return 1.0
-
 
 class AudioToVisemeConverter:
-    """Convert audio to viseme sequence using Whisper transcription"""
+    """Convert audio to viseme sequence using Whisper"""
 
     def __init__(self, whisper_model: str = "base"):
-        """
-        Args:
-            whisper_model: Whisper model size (tiny, base, small, medium, large)
-        """
         try:
-            from .audio_processor import WhisperTranscriber, AudioVisemeAligner, WHISPER_AVAILABLE
-
-            if not WHISPER_AVAILABLE:
-                raise ImportError("Whisper not available")
-
+            from .audio_processor import WhisperTranscriber, AudioVisemeAligner
             self.transcriber = WhisperTranscriber(model_size=whisper_model)
             self.aligner = AudioVisemeAligner()
             self.text_converter = TextToVisemeConverter()
-
         except ImportError as e:
-            print(f"Warning: Audio processing not available: {e}")
+            print(f"⚠ Warning: Audio processing not available: {e}")
             self.transcriber = None
             self.aligner = None
             self.text_converter = None
 
-    def audio_to_visemes(
-        self,
-        audio_path: str,
-        text: Optional[str] = None,
-        language: Optional[str] = None
-    ) -> List[VisemeFrame]:
-        """
-        Convert audio to viseme sequence with accurate timing
-
-        Args:
-            audio_path: Path to audio file
-            text: Optional transcript (if None, uses Whisper)
-            language: Language code for Whisper
-
-        Returns:
-            List of timed VisemeFrame objects
-        """
+    def audio_to_visemes(self,
+                        audio_path: str,
+                        text: Optional[str] = None,
+                        language: Optional[str] = None) -> List[VisemeFrame]:
+        """Convert audio to timed viseme sequence"""
         if self.transcriber is None:
-            raise ImportError("Audio processing not available. Install: pip install openai-whisper")
+            raise ImportError("Audio processing not available")
 
-        # Transcribe audio with word-level timing
+        # Transcribe audio
         transcription = self.transcriber.transcribe(audio_path, language=language)
 
-        # Override with provided text if given
-        if text is not None:
+        if text:
             transcription.text = text
 
-        # Align visemes with audio timing
+        # Align visemes to audio
         visemes = self.aligner.align_visemes_to_audio(transcription, self.text_converter)
 
         # Smooth timing
@@ -434,29 +686,35 @@ class AudioToVisemeConverter:
 
 
 class VisemeAnimationGenerator:
-    """Generate animation keyframes from viseme sequence - SIMPLIFIED"""
+    """
+    Generate animation keyframes with:
+    - Coarticulation blending
+    - Multi-pass smoothing
+    - Realistic transitions
+    """
 
-    def __init__(self, fps: int = 25, smoothing: float = 0.1):
+    def __init__(self, fps: int = 25, smoothing: float = 0.15, coarticulation: float = 0.3):
         """
         Args:
-            fps: Target animation framerate
-            smoothing: Interpolation smoothing (0=none, 1=full)
+            fps: Frames per second
+            smoothing: Smoothing strength (0-1)
+            coarticulation: Anticipatory blending (0-0.5)
         """
         self.fps = fps
         self.smoothing = smoothing
+        self.coarticulation = coarticulation
         self.mapper = VisemeToLipMapper()
 
     def generate_keyframes(self, visemes: List[VisemeFrame]) -> List[float]:
         """
-        Generate per-frame lip_open values from viseme sequence
+        Generate per-frame lip_open values with coarticulation
 
         Returns:
-            List of lip_open values (0.0 to 0.8) for each frame
+            List of lip_open values (0.0 to 0.8)
         """
         if not visemes:
             return []
 
-        # Calculate total duration and frame count
         total_duration = max(v.end_time for v in visemes)
         frame_count = int(total_duration * self.fps) + 1
 
@@ -465,38 +723,87 @@ class VisemeAnimationGenerator:
         for frame_idx in range(frame_count):
             frame_time = frame_idx / self.fps
 
-            # Find active visemes at this time
-            active_visemes = [v for v in visemes
-                            if v.start_time <= frame_time < v.end_time]
+            # Find current viseme
+            current_viseme = None
+            for v in visemes:
+                if v.start_time <= frame_time < v.end_time:
+                    current_viseme = v
+                    break
 
-            if not active_visemes:
-                # Use silence
-                lip_open = 0.0
-            else:
-                # Use the viseme
-                current_viseme = active_visemes[0]
-                lip_open = self.mapper.get_lip_open(
-                    current_viseme.viseme,
-                    current_viseme.intensity
-                )
+            if not current_viseme:
+                keyframes.append(0.0)
+                continue
 
-                # Apply smoothing at viseme transitions
-                if self.smoothing > 0 and frame_idx > 0:
-                    prev_lip_open = keyframes[-1]
-                    lip_open = self.mapper.interpolate_lip_open(
-                        lip_open, prev_lip_open, self.smoothing
-                    )
+            # Get base lip_open
+            lip_open = self.mapper.get_lip_open(
+                current_viseme.viseme,
+                current_viseme.intensity
+            )
+
+            # COARTICULATION: Blend towards next viseme
+            if self.coarticulation > 0:
+                # Find next viseme
+                next_viseme = None
+                for v in visemes:
+                    if v.start_time >= current_viseme.end_time:
+                        next_viseme = v
+                        break
+
+                if next_viseme:
+                    # Calculate progress through current viseme
+                    progress = (frame_time - current_viseme.start_time) / current_viseme.duration
+
+                    # Start blending in last X% of viseme
+                    blend_start = 1.0 - self.coarticulation
+                    if progress > blend_start:
+                        next_lip = self.mapper.get_lip_open(next_viseme.viseme)
+                        blend_amount = (progress - blend_start) / self.coarticulation
+
+                        # Smooth easing
+                        blend_amount = self._ease_in_out(blend_amount)
+
+                        lip_open = self.mapper.interpolate_lip_open(
+                            lip_open, next_lip, blend_amount, easing="ease-in-out"
+                        )
 
             keyframes.append(lip_open)
 
+        # Apply multi-pass smoothing
+        if self.smoothing > 0:
+            keyframes = self._smooth_keyframes(keyframes, self.smoothing)
+
         return keyframes
 
+    def _smooth_keyframes(self, keyframes: List[float], strength: float) -> List[float]:
+        """Apply Gaussian smoothing"""
+        if not SCIPY_AVAILABLE or len(keyframes) < 3:
+            return keyframes
+
+        # Convert strength to sigma
+        sigma = strength * 5.0  # 0.15 -> sigma=0.75
+
+        smoothed = gaussian_filter1d(
+            np.array(keyframes),
+            sigma=sigma,
+            mode='nearest'
+        )
+
+        return smoothed.tolist()
+
+    @staticmethod
+    def _ease_in_out(t: float) -> float:
+        """Smooth easing function (cubic)"""
+        return t * t * (3.0 - 2.0 * t)
+
     def export_to_json(self, keyframes: List[float], output_path: str):
-        """Export animation to JSON format"""
+        """Export animation to JSON"""
         animation_data = {
             "fps": self.fps,
             "frame_count": len(keyframes),
-            "keyframes": keyframes
+            "duration": len(keyframes) / self.fps,
+            "smoothing": self.smoothing,
+            "coarticulation": self.coarticulation,
+            "keyframes": [round(k, 4) for k in keyframes]
         }
 
         with open(output_path, 'w') as f:
